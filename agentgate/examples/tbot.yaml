@@ -1,0 +1,27 @@
+# Example tbot configuration for local Teleport OSS + Kubernetes
+# Adjust proxy_server, token, and kube_cluster for your environment.
+version: v2
+proxy_server: "127.0.0.1:3080"
+
+auth_server: "127.0.0.1:3025"
+
+onboarding:
+  token: "459a54411150d81b493932e38e86af4f"
+  join_method: "token"
+  certificate_ttl: 1h
+  # ca_pins:
+  #   - "sha256:c52dd0759f44a950e52ec30f49b954f736a16584a39094488e429c3e31e72257"
+storage:
+  type: directory
+  path: "./.tbot"
+
+outputs:
+  - type: kubernetes
+    destination:
+      type: directory
+      path: "./.tbot-output"
+    kubernetes_cluster: "kind-agentgate"
+    kubernetes_namespace: "default"
+    refresh:
+      enabled: true
+      interval: 5m

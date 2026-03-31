@@ -143,6 +143,16 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.DS_Store
+
+# Local runtime data
+agentgate/data/agentgate.db
+agentgate/data/*.db
+agentgate/data/*.db-journal
+teleport-data/
+teleport-local.yaml
+.tbot/
+.tbot-output/
 
 # Spyder project settings
 .spyderproject
