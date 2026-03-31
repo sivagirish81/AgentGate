@@ -1,0 +1,35 @@
+# Example Teleport OSS config with tbot service enabled
+# Adjust data_dir, addresses, and kubernetes_service as needed.
+teleport:
+  nodename: "agentgate-local"
+  data_dir: "/var/lib/teleport"
+  log:
+    output: stderr
+    severity: INFO
+
+auth_service:
+  enabled: "yes"
+  listen_addr: "0.0.0.0:3025"
+
+proxy_service:
+  enabled: "yes"
+  listen_addr: "0.0.0.0:3023"
+  web_listen_addr: "0.0.0.0:3080"
+
+ssh_service:
+  enabled: "yes"
+
+kubernetes_service:
+  enabled: "yes"
+  kubeconfig_file: "/path/to/kubeconfig"
+  # Note: set only one of kubeconfig_file or kube_cluster_name.
+  # Use kubeconfig_file when running Teleport outside the cluster.
+  # Use kube_cluster_name when running Teleport inside a Kubernetes pod.
+
+# tbot connects here to obtain workload identity material
+# Some Teleport versions expose this via "tbot_service"
+# Use the stanza supported by your Teleport OSS version.
+#
+# tbot_service:
+#   enabled: "yes"
+#   listen_addr: "0.0.0.0:3028"
