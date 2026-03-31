@@ -10,14 +10,18 @@ os.environ["AGENTGATE_DB_PATH"] = os.path.join(_temp_dir, "agentgate.db")
 
 from fastapi.testclient import TestClient
 
+from agentgate.app.db import init_db
 from agentgate.app.main import app
 
 
-client = TestClient(app)
+def _client() -> TestClient:
+    init_db()
+    return TestClient(app)
 
 
 def test_health() -> None:
-    response = client.get("/health")
+    with _client() as client:
+        response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
@@ -29,7 +33,8 @@ def test_create_task_happy_path() -> None:
         "environment": "staging",
         "natural_language_task": "Investigate errors and restart the deployment if necessary.",
     }
-    response = client.post("/tasks", json=payload)
+    with _client() as client:
+        response = client.post("/tasks", json=payload)
     assert response.status_code == 200
     body = response.json()
     assert body["task_id"] == payload["task_id"]
@@ -48,5 +53,6 @@ def test_policy_guardrail_denies_disallowed_action() -> None:
         "environment": "staging",
         "natural_language_task": "Please restart the deployment now.",
     }
-    response = client.post("/tasks", json=payload)
+    with _client() as client:
+        response = client.post("/tasks", json=payload)
     assert response.status_code == 403
