@@ -136,6 +136,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -144,6 +146,23 @@ ENV/
 env.bak/
 venv.bak/
 .DS_Store
+
+# Local runtime data
+data/agentgate.db
+data/*.db
+data/*.db-journal
+agentgate/data/agentgate.db
+agentgate/data/*.db
+agentgate/data/*.db-journal
+teleport-data/
+teleport-local.yaml
+kubeconfig-kind.yaml
+.tbot/
+.tbot-output/
+
+# Local scratch files
+temp.txt
+**/temp.txt
 
 # Local runtime data
 agentgate/data/agentgate.db

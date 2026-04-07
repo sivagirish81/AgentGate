@@ -1,0 +1,13 @@
+# Teleport role: time-bound remediation privileges for AgentGate
+kind: role
+metadata:
+  name: agentgate-remediator
+spec:
+  allow:
+    kubernetes_labels:
+      environment: "demo"
+    kubernetes_groups:
+      - agentgate-readonly
+      - agentgate-remediator
+  deny: {}
+version: v7

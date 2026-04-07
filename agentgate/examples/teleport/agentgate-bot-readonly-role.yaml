@@ -1,0 +1,12 @@
+# Teleport role: read-only bot identity for AgentGate
+kind: role
+metadata:
+  name: agentgate-bot-readonly
+spec:
+  allow:
+    kubernetes_labels:
+      environment: "demo"
+    kubernetes_groups:
+      - agentgate-readonly
+  deny: {}
+version: v7

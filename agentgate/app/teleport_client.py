@@ -25,8 +25,8 @@ class CommandResult:
 class TeleportClient:
     """Execute Kubernetes commands using Teleport-issued credentials."""
 
-    def __init__(self) -> None:
-        self.kubeconfig_path = settings.tbot_kubeconfig_path
+    def __init__(self, kubeconfig_path: str | None = None) -> None:
+        self.kubeconfig_path = kubeconfig_path or settings.tbot_kubeconfig_path
 
     def _env(self) -> dict:
         env = os.environ.copy()
@@ -66,6 +66,17 @@ class TeleportClient:
             "restart",
             "deployment",
             deployment,
+            "-n",
+            namespace,
+        ])
+
+    def auth_can_i(self, verb: str, resource: str, namespace: str) -> CommandResult:
+        return self._run([
+            "kubectl",
+            "auth",
+            "can-i",
+            verb,
+            resource,
             "-n",
             namespace,
         ])

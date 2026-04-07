@@ -1,0 +1,18 @@
+# Teleport role: allows requesting temporary remediation access
+kind: role
+metadata:
+  name: agentgate-requester
+spec:
+  allow:
+    kubernetes_labels:
+      environment: "demo"
+    kubernetes_groups:
+      - agentgate-readonly
+    request:
+      roles:
+        - agentgate-remediator
+      reasons:
+        - "*"
+      max_duration: 1h
+  deny: {}
+version: v7

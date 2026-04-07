@@ -11,10 +11,23 @@ curl -sS -X POST "${BASE_URL}/tasks" \
   "task_id": "${TASK_ID}",
   "agent_id": "agent-demo",
   "environment": "staging",
-  "natural_language_task": "Investigate high error rate in staging and restart the deployment if necessary."
+  "natural_language_task": "Investigate high error rate in staging and restart the deployment if necessary.",
+  "delegator_user": "demo-user",
+  "reason": "demo remediation",
+  "requested_ttl": "1h"
 }
 JSON
 
-curl -sS -X POST "${BASE_URL}/approve/${TASK_ID}" | cat
+echo "Rendering delegation request..."
+curl -sS -X POST "${BASE_URL}/tasks/${TASK_ID}/delegation/request" | cat
+
+if [[ "${AGENTGATE_ACCESS_PROVIDER:-}" == "mock" ]]; then
+  echo "Mock approving delegation..."
+  curl -sS -X POST "${BASE_URL}/tasks/${TASK_ID}/delegation/approve-mock" | cat
+fi
+
+echo "Executing task..."
 curl -sS -X POST "${BASE_URL}/execute/${TASK_ID}" | cat
+
+echo "Audit trail:"
 curl -sS -X GET "${BASE_URL}/audit" | cat

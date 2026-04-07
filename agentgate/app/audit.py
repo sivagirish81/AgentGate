@@ -16,6 +16,12 @@ def record_event(
     approval_status: str,
     execution_status: str,
     result_summary: str,
+    delegator_user: str | None = None,
+    delegation_session_id: str | None = None,
+    teleport_request_id: str | None = None,
+    teleport_request_command: str | None = None,
+    requested_scope_json: str | None = None,
+    revocation_state: str | None = None,
 ) -> str:
     timestamp = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
@@ -23,9 +29,11 @@ def record_event(
             """
             INSERT INTO audit_events (
                 timestamp, task_id, agent_id, action, environment,
-                approval_required, approval_status, execution_status, result_summary
+                approval_required, approval_status, execution_status, result_summary,
+                delegator_user, delegation_session_id, teleport_request_id,
+                teleport_request_command, requested_scope_json, revocation_state
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp,
@@ -37,6 +45,12 @@ def record_event(
                 approval_status,
                 execution_status,
                 result_summary,
+                delegator_user,
+                delegation_session_id,
+                teleport_request_id,
+                teleport_request_command,
+                requested_scope_json,
+                revocation_state,
             ),
         )
         conn.commit()
@@ -48,7 +62,9 @@ def list_events() -> List[dict]:
         cur = conn.execute(
             """
             SELECT timestamp, task_id, agent_id, action, environment,
-                   approval_required, approval_status, execution_status, result_summary
+                   approval_required, approval_status, execution_status, result_summary,
+                   delegator_user, delegation_session_id, teleport_request_id,
+                   teleport_request_command, requested_scope_json, revocation_state
             FROM audit_events
             ORDER BY id DESC
             """
