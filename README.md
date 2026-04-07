@@ -59,7 +59,7 @@ flowchart TB
 - Links human + agent + request in audit
 - Keeps the Kubernetes story first-class and minimal
 
-## Quick Demo (5 minutes)
+## Quick Start
 
 Requirements:
 - Teleport running locally
@@ -71,7 +71,7 @@ Start the API:
 uvicorn agentgate.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Run the founder demo script:
+Run the demo script:
 ```bash
 AGENTGATE_ACCESS_PROVIDER=command \
 AGENTGATE_TELEPORT_REQUEST_MODE=role \
@@ -127,10 +127,6 @@ AGENTGATE_USE_MOCK_EXECUTOR=true \
 ## Examples
 
 See `agentgate/examples/README.md` for the example files and how to use them safely.
-
-## Demo Notes For Founders
-
-See `docs/demo.md` for a full end-to-end flow and the exact framing to use.
 
 ## Tests
 
