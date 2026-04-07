@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 
@@ -19,6 +20,9 @@ def parse_args() -> argparse.Namespace:
         "--task",
         default="Investigate high error rate in staging and restart the deployment if necessary.",
     )
+    parser.add_argument("--delegator", default=os.getenv("USER", "human"))
+    parser.add_argument("--reason", default="incident remediation")
+    parser.add_argument("--ttl", default="1h")
     return parser.parse_args()
 
 
@@ -30,6 +34,9 @@ def main() -> int:
         "agent_id": args.agent_id,
         "environment": args.environment,
         "natural_language_task": args.task,
+        "delegator_user": args.delegator,
+        "reason": args.reason,
+        "requested_ttl": args.ttl,
     }
 
     print("Submitting task...")
@@ -42,16 +49,26 @@ def main() -> int:
     print("Planned actions:")
     print(json.dumps(task["plan"], indent=2))
 
-    approval_required = task["approval_required"]
-    if approval_required:
-        answer = input("Approval required. Approve now? [y/N]: ").strip().lower()
-        if answer == "y":
-            approve_resp = requests.post(f"{args.base_url}/approve/{args.task_id}", timeout=10)
-            print("Approval response:", approve_resp.json())
-        else:
-            reject_resp = requests.post(f"{args.base_url}/reject/{args.task_id}", timeout=10)
-            print("Rejected:", reject_resp.json())
-            return 0
+    if task.get("delegation_required"):
+        print("Delegation required. Rendering access request command...")
+        request_resp = requests.post(f"{args.base_url}/tasks/{args.task_id}/delegation/request", timeout=10)
+        if request_resp.status_code != 200:
+            print("Failed to request delegation:", request_resp.text)
+            return 1
+        request_body = request_resp.json()
+        command = request_body.get("teleport_request", {}).get("request_command")
+        if command:
+            print("Run this command to request access:")
+            print(command)
+        if os.getenv("AGENTGATE_ACCESS_PROVIDER") == "mock":
+            answer = input("Mock approve delegation now? [y/N]: ").strip().lower()
+            if answer == "y":
+                approve_resp = requests.post(
+                    f"{args.base_url}/tasks/{args.task_id}/delegation/approve-mock", timeout=10
+                )
+                print("Approval response:", approve_resp.json())
+            else:
+                print("Delegation not approved. Write actions will be blocked.")
 
     print("Executing task...")
     exec_resp = requests.post(f"{args.base_url}/execute/{args.task_id}", timeout=30)
