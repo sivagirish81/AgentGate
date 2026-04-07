@@ -39,6 +39,10 @@ class Settings:
     teleport_request_mode: str = os.getenv("AGENTGATE_TELEPORT_REQUEST_MODE", "role")
     teleport_request_role: str = os.getenv("AGENTGATE_TELEPORT_REQUEST_ROLE", "agentgate-remediator")
     default_request_ttl: str = os.getenv("AGENTGATE_DEFAULT_REQUEST_TTL", "1h")
+    tctl_config_path: str = os.getenv("AGENTGATE_TCTL_CONFIG", "")
+    tctl_identity_path: str = os.getenv("AGENTGATE_TCTL_IDENTITY", "")
+    teleport_auth_server: str = os.getenv("AGENTGATE_TELEPORT_AUTH_SERVER", "")
+    teleport_insecure: bool = os.getenv("AGENTGATE_TELEPORT_INSECURE", "false").lower() == "true"
     use_mock_executor: bool = os.getenv("AGENTGATE_USE_MOCK_EXECUTOR", "false").lower() == "true"
 
 

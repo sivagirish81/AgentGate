@@ -42,6 +42,10 @@ def test_write_task_requires_delegation() -> None:
         assert response.status_code == 200
         body = response.json()
         assert body["delegation_required"] is True
+        request = client.post(f"/tasks/{payload['task_id']}/delegation/request")
+        assert request.status_code == 200
+        req_body = request.json()
+        assert req_body["teleport_request"]["request_command"]
         execute = client.post(f"/execute/{payload['task_id']}")
         assert execute.status_code == 200
         results = execute.json()["results"]

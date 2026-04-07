@@ -5,7 +5,7 @@ metadata:
 spec:
   allow:
     kubernetes_labels:
-      environment: "demo"
+      "*": "*"
     kubernetes_groups:
       - agentgate-readonly
     request:

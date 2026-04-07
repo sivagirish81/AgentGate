@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 
-from agentgate.app.access_provider import CommandRenderingTeleportAccessProvider, derive_scope
+from agentgate.app.access_provider import (
+    AuthApiTeleportAccessProvider,
+    CommandRenderingTeleportAccessProvider,
+    derive_scope,
+)
 from agentgate.app.db import init_db
 from agentgate.app.delegation import (
     STATUS_APPROVED,
@@ -55,6 +59,20 @@ def test_resource_request_command_rendering() -> None:
     result = provider.create_request(session, actions)
     assert "--resource" in (result.teleport_request_command or "")
     assert "/agentgate-local/kube:ns:deployments.apps/kind-agentgate/prod/website" in (result.teleport_request_command or "")
+
+
+def test_auth_api_provider_renders_command() -> None:
+    actions = [PlannedAction(action="restart_deployment", namespace="default", deployment="my-app")]
+    session = {
+        "session_id": "s-auth",
+        "reason": "demo",
+        "requested_ttl": "1h",
+        "request_mode": "role",
+        "requested_scope_json": json.dumps({}),
+    }
+    provider = AuthApiTeleportAccessProvider()
+    result = provider.create_request(session, actions)
+    assert "tsh request create" in (result.teleport_request_command or "")
 
 
 def test_policy_baseline_vs_requestable() -> None:

@@ -1,23 +1,25 @@
 # AgentGate
 
-**AgentGate prototypes Teleport-style delegated agent access:**
-**the agent starts with a read-only workload identity, requests time-bound elevation for risky actions,**
-**and records both the human delegator and the agent in the audit trail.**
+AgentGate is a lightweight prototype of delegated agent access for Kubernetes built on Teleport's current primitives. It models a read-only workload identity for agents and a time-bound elevation flow for risky actions, while keeping human delegators and agent actions tied together in audit.
 
-This repo is a lightweight FastAPI + SQLite prototype that mirrors Teleport's current public primitives (Workload Identity, Access Requests, audit events). It does **not** claim any future delegation-cert features already exist.
+This is intentionally not production software. It is a focused, honest prototype meant to demonstrate how Teleport's existing primitives can support agentic delegation patterns.
+
+## Why This Exists
+
+AI agents should not run with standing admin credentials. Teleport already provides the building blocks for non-human identity, access requests, and audit. AgentGate shows how those pieces can be composed into a delegation-session workflow without inventing new Teleport features.
 
 ## What's Real vs Simulated
 
-**Real today (Teleport primitives):**
-- Workload Identity (`tbot`) for a read-only bot identity
+Real today (Teleport primitives):
+- Workload Identity via `tbot`
 - Access Requests (role requests in OSS, resource requests in Enterprise)
-- Kubernetes proxy + audit events in Teleport
-- Standard Kubernetes RBAC for least-privilege
+- Kubernetes proxy and audit logging
+- Standard Kubernetes RBAC for least privilege
 
-**Simulated locally (prototype glue):**
-- Delegation Sessions (AgentGate model that ties tasks + delegators + Teleport requests)
+Simulated locally (prototype glue):
+- Delegation Session model that binds task + human + agent + request
 - Rendering `tsh request create ...` commands instead of calling Teleport APIs
-- Optional mock approval flow when no Teleport is available
+- Optional mock approval for demo/testing
 
 ## Architecture
 
@@ -38,182 +40,100 @@ flowchart TB
   api --> audit["AgentGate Audit (SQLite)"]
 ```
 
-## Delegation Sessions (Core Concept)
+## How The Delegation Flow Works
 
-A **Delegation Session** is the primary trust boundary:
-- **Read-only tasks**: run with the bot's baseline identity.
-- **Write/remediation tasks**: require an **approved, time-bound** delegation session.
-
-Each session ties together:
-- human delegator
-- agent identity
-- task
-- requested scope
-- Teleport access request command/id (if provided)
-
-## Policy Model
-
-Agent policies are split into two buckets:
-- **baseline actions** (allowed with read-only identity)
-- **requestable actions** (require delegation)
-
-Default policy for `agent-demo`:
-- baseline: `read_pods`, `read_logs`, `describe_deployment`
-- requestable: `restart_deployment`
-
-You can override via `AGENTGATE_AGENT_POLICY` (JSON) or the legacy `AGENTGATE_AGENT_ALLOWLIST`.
-
-## Quickstart (Mock Mode)
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r agentgate/requirements.txt
-
-export AGENTGATE_USE_MOCK_EXECUTOR=true
-export AGENTGATE_ACCESS_PROVIDER=mock
-
-uvicorn agentgate.app.main:app --reload --app-dir /Users/sivagirish/Documents/Work/Project/AgentGate
-```
-
-```bash
-python agentgate/scripts/run_agent.py --environment staging
-```
-
-## Teleport-Backed Demo (Role Requests / OSS-shaped)
-
-**Goal:** read-only bot identity + role request for remediation.
-
-1) Start Teleport and Kubernetes service.
-2) Apply RBAC and Teleport roles (examples below).
-3) Run `tbot` using a **short-lived join token** (no static secrets).
-4) Start AgentGate.
-
-Required env:
-```bash
-export AGENTGATE_TBOT_KUBECONFIG=/Users/sivagirish/Documents/Work/Project/AgentGate/.tbot-output/kubeconfig.yaml
-export AGENTGATE_ACCESS_PROVIDER=command
-export AGENTGATE_TELEPORT_REQUEST_MODE=role
-export AGENTGATE_TELEPORT_REQUEST_ROLE=agentgate-remediator
-```
-
-**Elevated execution (optional but honest):**
-```bash
-export AGENTGATE_ELEVATED_KUBECONFIG=/path/to/elevated/kubeconfig
-```
-If this is not set, write actions will fail transparently (unless mock mode is enabled).
-
-## Enterprise-Shaped Demo (Resource Requests)
-
-Set:
-```bash
-export AGENTGATE_TELEPORT_REQUEST_MODE=resource
-export AGENTGATE_TELEPORT_CLUSTER=agentgate-local
-export AGENTGATE_TELEPORT_KUBE_CLUSTER=kind-agentgate
-```
-
-AgentGate will derive resource IDs like:
-```
-/agentgate-local/kube:ns:deployments.apps/kind-agentgate/prod/website
-```
-and render a resource access request command.
-
-## Example API Flow
-
-```bash
-# 1) Create task
-curl -s -X POST http://127.0.0.1:8000/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "task_id": "demo-1",
-    "agent_id": "agent-demo",
-    "environment": "staging",
-    "natural_language_task": "Restart deployment my-app",
-    "delegator_user": "alice",
-    "reason": "rollout fix",
-    "requested_ttl": "1h"
-  }'
-
-# 2) Render access request command
-curl -s -X POST http://127.0.0.1:8000/tasks/demo-1/delegation/request
-
-# 3) Execute (write actions will be blocked until approved)
-curl -s -X POST http://127.0.0.1:8000/execute/demo-1
-```
-
-## Example Teleport Access Request Commands
-
-**Role request (OSS-shaped):**
-```
-tsh request create --roles="agentgate-remediator" --reason="rollout fix" --ttl="1h"
-```
-
-**Resource request (Enterprise-shaped):**
-```
-tsh request create --resource="/agentgate-local/kube:ns:deployments.apps/kind-agentgate/prod/website" --reason="rollout fix" --ttl="1h"
-```
-
-> Note: resource-request CLI flags can vary by Teleport version. AgentGate renders a best-effort command and stores it in the delegation session for audit.
-
-## Examples (Tightened Security Story)
-
-Teleport roles:
-- `agentgate/examples/teleport/agentgate-bot-readonly-role.yaml`
-- `agentgate/examples/teleport/agentgate-remediator-role.yaml`
-- `agentgate/examples/teleport/agentgate-requester-role.yaml`
-
-Kubernetes RBAC:
-- `agentgate/examples/kubernetes/agentgate-readonly-rbac.yaml`
-- `agentgate/examples/kubernetes/agentgate-remediator-rbac.yaml`
-
-tbot config (no static secrets):
-- `agentgate/examples/tbot.yaml`
+1. The agent submits a task.
+2. The planner generates actions.
+3. Baseline actions run with the read-only identity.
+4. Requestable actions require a Delegation Session.
+5. AgentGate renders a Teleport Access Request command.
+6. A human approves the request in Teleport.
+7. If an elevated identity is available, write actions execute; otherwise they fail clearly.
 
 ## Why This Demonstrates Teleport Understanding
 
-- **Workload Identity / tbot** for non-human identity
-- **Least privilege** with read-only baseline roles
-- **Requestable access** for risky actions
-- **Scoped elevation** (role or resource request)
-- **Audit + revocation** tied to delegation sessions
-- **Kubernetes-first** and lightweight by design
+- Uses Workload Identity for non-human access
+- Enforces least privilege by default
+- Uses Access Requests for time-bound elevation
+- Scopes elevation to specific risky actions
+- Links human + agent + request in audit
+- Keeps the Kubernetes story first-class and minimal
 
-## MCP Note (Stretch)
+## Quick Demo (5 minutes)
 
-MCP is a future integration point, not the primary feature here. This prototype focuses on Teleport's current access primitives and audit story.
+Requirements:
+- Teleport running locally
+- Kubernetes cluster reachable
+- `tbot` configured with a short-lived join token
 
-## Security Cleanup Notes
-
-- No static join tokens are stored in the repo
-- No `system:masters` bot role
-- No wildcard Kubernetes access
-
-## Repository Layout
-
+Start the API:
+```bash
+uvicorn agentgate.app.main:app --host 127.0.0.1 --port 8000
 ```
-agentgate/
-  app/
-    main.py
-    config.py
-    models.py
-    planner.py
-    delegation.py
-    access_provider.py
-    executor.py
-    teleport_client.py
-    audit.py
-    db.py
-  scripts/
-    run_agent.py
-    demo_task.sh
-  examples/
-    tbot.yaml
-    teleport.yaml
-    kubernetes/
-      agentgate-readonly-rbac.yaml
-      agentgate-remediator-rbac.yaml
-    teleport/
-      agentgate-bot-readonly-role.yaml
-      agentgate-remediator-role.yaml
-      agentgate-requester-role.yaml
+
+Run the founder demo script:
+```bash
+AGENTGATE_ACCESS_PROVIDER=command \
+AGENTGATE_TELEPORT_REQUEST_MODE=role \
+AGENTGATE_TELEPORT_REQUEST_ROLE=agentgate-remediator \
+AGENTGATE_TBOT_KUBECONFIG=./.tbot-output/kubeconfig.yaml \
+./agentgate/scripts/founder_demo.sh
+```
+
+If you want AgentGate to **poll Teleport for approval** (via `tctl`), use the auth API provider and attach the request ID:
+```bash
+AGENTGATE_ACCESS_PROVIDER=auth_api \
+AGENTGATE_TCTL_CONFIG=agentgate/examples/teleport/teleport-oss-local.yaml \
+AGENTGATE_TELEPORT_INSECURE=true \
+AGENTGATE_TBOT_KUBECONFIG=./.tbot-output/kubeconfig.yaml \
+./agentgate/scripts/founder_demo.sh
+```
+Then attach the request ID after you create it:
+```bash
+curl -s -X POST http://127.0.0.1:8000/tasks/<task_id>/delegation/attach \
+  -H 'Content-Type: application/json' \
+  -d '{"teleport_request_id":"<request_id>"}'
+```
+
+If you want a fully simulated run:
+```bash
+AGENTGATE_ACCESS_PROVIDER=mock \
+AGENTGATE_USE_MOCK_EXECUTOR=true \
+./agentgate/scripts/founder_demo.sh
+```
+
+## Security Posture
+
+- Read-only bot identity by default
+- No static tokens in repo
+- No `system:masters` or wildcard permissions
+- Write actions require explicit delegation approval
+- Optional elevated execution identity is separate and time-bound
+
+## Current Limitations
+
+- Delegation Sessions are local state, not a Teleport API
+- Access requests are rendered, not created programmatically
+- Auth API polling requires a request ID attached to the session
+- Elevated execution depends on a separate kubeconfig
+- This is a Kubernetes-only prototype
+
+## Next Logical Extension
+
+- Optional provider to create and poll real Teleport Access Requests
+- Map delegation sessions to Teleport Access Request IDs in audit
+- Add scoped resource requests based on live cluster metadata
+
+## Examples
+
+See `agentgate/examples/README.md` for the example files and how to use them safely.
+
+## Demo Notes For Founders
+
+See `docs/demo.md` for a full end-to-end flow and the exact framing to use.
+
+## Tests
+
+```bash
+pytest -q
 ```
