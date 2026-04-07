@@ -7,17 +7,24 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException
 
-from .approvals import (
-    APPROVAL_APPROVED,
-    APPROVAL_PENDING,
-    APPROVAL_REJECTED,
-    approval_required,
-    get_approval,
-    initial_approval_status,
-    record_approval,
-)
+from .access_provider import derive_scope, get_access_provider
 from .audit import record_event, list_events
+from .config import settings
 from .db import get_connection, init_db
+from .delegation import (
+    STATUS_NOT_REQUIRED,
+    STATUS_PENDING_APPROVAL,
+    STATUS_PENDING_REQUEST,
+    STATUS_REJECTED,
+    approve_session_mock,
+    create_session,
+    get_session_for_task,
+    mark_pending_approval,
+    refresh_expiration,
+    reject_session_mock,
+    revoke_session,
+    update_session,
+)
 from .executor import execute_actions
 from .models import (
     ApprovalResponse,
@@ -29,9 +36,9 @@ from .models import (
     TaskResponse,
 )
 from .planner import plan_task
-from .policy import enforce_allowlist
+from .policy import delegation_required, enforce_allowlist
 
-app = FastAPI(title="AgentGate", version="0.1.0")
+app = FastAPI(title="AgentGate", version="0.2.0")
 
 
 @app.on_event("startup")
@@ -58,10 +65,14 @@ def create_task(payload: TaskCreate) -> TaskResponse:
             approval_status="not_applicable",
             execution_status="blocked",
             result_summary=f"denied actions: {', '.join(denied)}",
+            delegator_user=payload.delegator_user,
         )
         raise HTTPException(status_code=403, detail=f"agent not allowed to perform actions: {', '.join(denied)}")
-    approval_needed = approval_required(payload.environment, actions)
-    approval_status = initial_approval_status(approval_needed)
+
+    delegation_needed = delegation_required(payload.agent_id, actions)
+    delegation_status = STATUS_PENDING_REQUEST if delegation_needed else STATUS_NOT_REQUIRED
+    scope = derive_scope(actions) if delegation_needed else {}
+    requested_scope_json = json.dumps(scope)
     created_at = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
@@ -73,9 +84,11 @@ def create_task(payload: TaskCreate) -> TaskResponse:
             """
             INSERT INTO tasks (
                 task_id, agent_id, environment, natural_language_task,
-                plan_json, created_at, approval_required, approval_status, execution_status
+                plan_json, created_at, approval_required, approval_status,
+                execution_status, delegator_user, reason, requested_ttl,
+                request_mode, delegation_required
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.task_id,
@@ -84,26 +97,44 @@ def create_task(payload: TaskCreate) -> TaskResponse:
                 payload.natural_language_task,
                 json.dumps([action.model_dump() for action in actions]),
                 created_at,
-                int(approval_needed),
-                approval_status,
+                int(delegation_needed),
+                "pending" if delegation_needed else "not_required",
                 "not_started",
+                payload.delegator_user,
+                payload.reason,
+                payload.requested_ttl,
+                payload.request_mode,
+                int(delegation_needed),
             ),
         )
         conn.commit()
+
+    session = create_session(
+        task_id=payload.task_id,
+        delegator_user=payload.delegator_user,
+        agent_id=payload.agent_id,
+        reason=payload.reason,
+        requested_ttl=payload.requested_ttl,
+        requested_scope_json=requested_scope_json,
+        request_mode=payload.request_mode or settings.teleport_request_mode,
+        status=delegation_status,
+    )
 
     record_event(
         task_id=payload.task_id,
         agent_id=payload.agent_id,
         action="task_intake",
         environment=payload.environment,
-        approval_required=approval_needed,
-        approval_status=approval_status,
+        approval_required=delegation_needed,
+        approval_status=delegation_status,
         execution_status="not_started",
         result_summary="task accepted",
+        delegator_user=payload.delegator_user,
+        delegation_session_id=session.get("session_id"),
+        requested_scope_json=requested_scope_json,
     )
 
-    if approval_needed:
-        record_approval(payload.task_id, True, approval_status)
+    next_steps = _build_next_steps(payload.task_id, delegation_needed)
 
     return TaskResponse(
         task_id=payload.task_id,
@@ -111,19 +142,24 @@ def create_task(payload: TaskCreate) -> TaskResponse:
         environment=payload.environment,
         natural_language_task=payload.natural_language_task,
         plan=actions,
-        approval_required=approval_needed,
-        approval_status=approval_status,
+        approval_required=delegation_needed,
+        approval_status=delegation_status,
         execution_status="not_started",
+        delegation_required=delegation_needed,
+        delegation_session=session,
+        teleport_request=_teleport_request_payload(session),
+        next_steps=next_steps,
     )
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: str) -> TaskResponse:
-    with get_connection() as conn:
-        row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="task not found")
-        plan = json.loads(row["plan_json"])
+    row = _get_task_row(task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="task not found")
+    plan = json.loads(row["plan_json"])
+    session = get_session_for_task(task_id) or {}
+    delegation_needed = bool(row["delegation_required"]) if "delegation_required" in row.keys() else bool(row["approval_required"])
 
     return TaskResponse(
         task_id=row["task_id"],
@@ -134,49 +170,170 @@ def get_task(task_id: str) -> TaskResponse:
         approval_required=bool(row["approval_required"]),
         approval_status=row["approval_status"],
         execution_status=row["execution_status"],
+        delegation_required=delegation_needed,
+        delegation_session=session,
+        teleport_request=_teleport_request_payload(session),
+        next_steps=_build_next_steps(task_id, delegation_needed),
     )
+
+
+@app.post("/tasks/{task_id}/delegation/request")
+def request_delegation(task_id: str) -> dict:
+    task = _get_task_row(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    if session.get("status") == STATUS_NOT_REQUIRED:
+        raise HTTPException(status_code=400, detail="delegation not required")
+
+    plan = json.loads(task["plan_json"])
+    actions = [_normalize_action(action) for action in plan]
+    provider = get_access_provider()
+    result = provider.create_request(session, actions)
+    session = mark_pending_approval(
+        session["session_id"],
+        result.teleport_request_id,
+        result.teleport_request_command,
+        result.notes,
+    )
+
+    record_event(
+        task_id=task_id,
+        agent_id=task["agent_id"],
+        action="delegation_request",
+        environment=task["environment"],
+        approval_required=True,
+        approval_status=session.get("status", STATUS_PENDING_APPROVAL),
+        execution_status=task["execution_status"],
+        result_summary=result.notes or "delegation request rendered",
+        delegator_user=session.get("delegator_user"),
+        delegation_session_id=session.get("session_id"),
+        teleport_request_id=session.get("teleport_request_id"),
+        teleport_request_command=session.get("teleport_request_command"),
+        requested_scope_json=session.get("requested_scope_json"),
+    )
+
+    return {
+        "delegation_session": session,
+        "teleport_request": _teleport_request_payload(session),
+        "next_steps": _build_next_steps(task_id, True),
+    }
+
+
+@app.get("/tasks/{task_id}/delegation")
+def get_delegation(task_id: str) -> dict:
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    return {
+        "delegation_session": session,
+        "teleport_request": _teleport_request_payload(session),
+    }
+
+
+@app.post("/tasks/{task_id}/delegation/refresh")
+def refresh_delegation(task_id: str) -> dict:
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    provider = get_access_provider()
+    result = provider.refresh(session)
+    session = update_session(session["session_id"], status=result.status, notes=result.notes)
+    session = refresh_expiration(session["session_id"])
+    return {
+        "delegation_session": session,
+        "teleport_request": _teleport_request_payload(session),
+    }
+
+
+@app.post("/tasks/{task_id}/delegation/revoke")
+def revoke_delegation(task_id: str) -> dict:
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    provider = get_access_provider()
+    result = provider.revoke(session)
+    session = revoke_session(session["session_id"])
+    record_event(
+        task_id=task_id,
+        agent_id=session.get("agent_id"),
+        action="delegation_revoke",
+        environment=_task_environment(task_id),
+        approval_required=True,
+        approval_status=session.get("status"),
+        execution_status="not_started",
+        result_summary=result.notes or "delegation revoked",
+        delegator_user=session.get("delegator_user"),
+        delegation_session_id=session.get("session_id"),
+        teleport_request_id=session.get("teleport_request_id"),
+        teleport_request_command=session.get("teleport_request_command"),
+        requested_scope_json=session.get("requested_scope_json"),
+        revocation_state=session.get("status"),
+    )
+    return {
+        "delegation_session": session,
+        "teleport_request": _teleport_request_payload(session),
+    }
+
+
+@app.post("/tasks/{task_id}/delegation/approve-mock")
+def approve_delegation_mock(task_id: str) -> dict:
+    session = _require_mock_delegation(task_id)
+    session = approve_session_mock(session["session_id"])
+    record_event(
+        task_id=task_id,
+        agent_id=session.get("agent_id"),
+        action="delegation_approve",
+        environment=_task_environment(task_id),
+        approval_required=True,
+        approval_status=session.get("status"),
+        execution_status="not_started",
+        result_summary="mock delegation approved",
+        delegator_user=session.get("delegator_user"),
+        delegation_session_id=session.get("session_id"),
+        teleport_request_id=session.get("teleport_request_id"),
+        teleport_request_command=session.get("teleport_request_command"),
+        requested_scope_json=session.get("requested_scope_json"),
+    )
+    return {"delegation_session": session}
+
+
+@app.post("/tasks/{task_id}/delegation/reject-mock")
+def reject_delegation_mock(task_id: str) -> dict:
+    session = _require_mock_delegation(task_id)
+    session = reject_session_mock(session["session_id"])
+    record_event(
+        task_id=task_id,
+        agent_id=session.get("agent_id"),
+        action="delegation_reject",
+        environment=_task_environment(task_id),
+        approval_required=True,
+        approval_status=STATUS_REJECTED,
+        execution_status="not_started",
+        result_summary="mock delegation rejected",
+        delegator_user=session.get("delegator_user"),
+        delegation_session_id=session.get("session_id"),
+        teleport_request_id=session.get("teleport_request_id"),
+        teleport_request_command=session.get("teleport_request_command"),
+        requested_scope_json=session.get("requested_scope_json"),
+    )
+    return {"delegation_session": session}
 
 
 @app.post("/approve/{task_id}", response_model=ApprovalResponse)
 def approve_task(task_id: str) -> ApprovalResponse:
-    task = _get_task_row(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task not found")
-    if task["approval_status"] == APPROVAL_REJECTED:
-        raise HTTPException(status_code=400, detail="task already rejected")
-
-    decided_at = record_approval(task_id, bool(task["approval_required"]), APPROVAL_APPROVED, decided_by="human")
-    record_event(
-        task_id=task_id,
-        agent_id=task["agent_id"],
-        action="approval",
-        environment=task["environment"],
-        approval_required=bool(task["approval_required"]),
-        approval_status=APPROVAL_APPROVED,
-        execution_status=task["execution_status"],
-        result_summary="approved",
-    )
-    return ApprovalResponse(task_id=task_id, required=bool(task["approval_required"]), status=APPROVAL_APPROVED, decided_at=decided_at)
+    session = _require_mock_delegation(task_id)
+    session = approve_session_mock(session["session_id"])
+    return ApprovalResponse(task_id=task_id, required=True, status=session.get("status"), decided_at=session.get("approved_at"))
 
 
 @app.post("/reject/{task_id}", response_model=ApprovalResponse)
 def reject_task(task_id: str) -> ApprovalResponse:
-    task = _get_task_row(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="task not found")
-
-    decided_at = record_approval(task_id, bool(task["approval_required"]), APPROVAL_REJECTED, decided_by="human")
-    record_event(
-        task_id=task_id,
-        agent_id=task["agent_id"],
-        action="approval",
-        environment=task["environment"],
-        approval_required=bool(task["approval_required"]),
-        approval_status=APPROVAL_REJECTED,
-        execution_status=task["execution_status"],
-        result_summary="rejected",
-    )
-    return ApprovalResponse(task_id=task_id, required=bool(task["approval_required"]), status=APPROVAL_REJECTED, decided_at=decided_at)
+    session = _require_mock_delegation(task_id)
+    session = reject_session_mock(session["session_id"])
+    return ApprovalResponse(task_id=task_id, required=True, status=session.get("status"), decided_at=None)
 
 
 @app.post("/execute/{task_id}", response_model=ExecuteResponse)
@@ -184,14 +341,6 @@ def execute_task(task_id: str) -> ExecuteResponse:
     task = _get_task_row(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
-
-    approval = get_approval(task_id)
-    approval_status = task["approval_status"]
-    if approval and approval.get("status"):
-        approval_status = approval["status"]
-
-    if task["approval_required"] and approval_status not in {APPROVAL_APPROVED}:
-        raise HTTPException(status_code=400, detail="approval required")
 
     plan = json.loads(task["plan_json"])
     actions = [_normalize_action(action) for action in plan]
@@ -203,18 +352,24 @@ def execute_task(task_id: str) -> ExecuteResponse:
             action="policy_denied",
             environment=task["environment"],
             approval_required=bool(task["approval_required"]),
-            approval_status=approval_status,
+            approval_status=task["approval_status"],
             execution_status="blocked",
             result_summary=f"denied actions: {', '.join(denied)}",
         )
         raise HTTPException(status_code=403, detail=f"agent not allowed to perform actions: {', '.join(denied)}")
+
+    session = get_session_for_task(task_id)
+    if session and session.get("status") == STATUS_PENDING_APPROVAL:
+        refresh_expiration(session["session_id"])
+
     results = execute_actions(
         task_id=task_id,
         agent_id=task["agent_id"],
         environment=task["environment"],
         actions=actions,
         approval_required=bool(task["approval_required"]),
-        approval_status=approval_status,
+        approval_status=session.get("status") if session else task["approval_status"],
+        delegation_session=session,
     )
 
     execution_status = "completed"
@@ -245,3 +400,37 @@ def _normalize_action(data: dict) -> PlannedAction:
         deployment=data.get("deployment"),
         details=data.get("details"),
     )
+
+
+def _task_environment(task_id: str) -> str:
+    row = _get_task_row(task_id)
+    return row["environment"] if row else "unknown"
+
+
+def _teleport_request_payload(session: dict | None) -> dict | None:
+    if not session:
+        return None
+    return {
+        "request_id": session.get("teleport_request_id"),
+        "request_command": session.get("teleport_request_command"),
+        "status": session.get("status"),
+    }
+
+
+def _build_next_steps(task_id: str, delegation_needed: bool) -> List[str]:
+    if delegation_needed:
+        return [
+            f"POST /tasks/{task_id}/delegation/request to render a Teleport access request",
+            f"POST /tasks/{task_id}/delegation/refresh after approval",
+            f"POST /execute/{task_id} to run write actions",
+        ]
+    return [f"POST /execute/{task_id} to run actions"]
+
+
+def _require_mock_delegation(task_id: str) -> dict:
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    if settings.access_provider != "mock" and session.get("request_mode") != "mock":
+        raise HTTPException(status_code=400, detail="mock-only endpoint")
+    return session

@@ -2,11 +2,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
-
-# Ensure DB is isolated per test run before app import.
-_temp_dir = tempfile.mkdtemp(prefix="agentgate-test-")
-os.environ["AGENTGATE_DB_PATH"] = os.path.join(_temp_dir, "agentgate.db")
 
 from fastapi.testclient import TestClient
 

@@ -1,19 +1,30 @@
-# Example tbot configuration for local Teleport OSS + Kubernetes
-# Adjust proxy_server, token, and kube_cluster for your environment.
+# Example tbot configuration for local Teleport + Kubernetes.
+# This file intentionally contains NO static secrets.
+#
+# Recommended join methods in production:
+# - kubernetes (in-cluster workload identity)
+# - iam (AWS/GCP/Azure)
+# - gitlab/azuredevops/etc.
+#
+# For a local demo, you can use a short-lived join token:
+#   export TBOT_TOKEN=$(tctl bots instances add agentgate-bot)
+#   envsubst < agentgate/examples/tbot.yaml > /tmp/tbot.yaml
+#   tbot start -c /tmp/tbot.yaml --insecure
 version: v2
 proxy_server: "127.0.0.1:3080"
 
+# For some OSS configs, auth_server is required.
 auth_server: "127.0.0.1:3025"
 
 onboarding:
-  token: "459a54411150d81b493932e38e86af4f"
+  token: "${TBOT_TOKEN}"
   join_method: "token"
   certificate_ttl: 1h
-  # ca_pins:
-  #   - "sha256:c52dd0759f44a950e52ec30f49b954f736a16584a39094488e429c3e31e72257"
+
 storage:
   type: directory
   path: "./.tbot"
+  # symlinks: insecure  # Uncomment on platforms that don't support secure symlinks.
 
 outputs:
   - type: kubernetes

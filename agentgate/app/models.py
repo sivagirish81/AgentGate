@@ -11,6 +11,10 @@ class TaskCreate(BaseModel):
     agent_id: str = Field(..., description="Agent identity")
     environment: str = Field(..., description="staging or prod")
     natural_language_task: str = Field(..., description="Task request")
+    delegator_user: str | None = Field(None, description="Human delegator identity")
+    reason: str | None = Field(None, description="Reason for delegation request")
+    requested_ttl: str | None = Field(None, description="Requested delegation TTL (e.g. 1h)")
+    request_mode: str | None = Field(None, description="mock, role, or resource")
 
 
 class PlannedAction(BaseModel):
@@ -26,9 +30,13 @@ class TaskResponse(BaseModel):
     environment: str
     natural_language_task: str
     plan: List[PlannedAction]
-    approval_required: bool
-    approval_status: str
     execution_status: str
+    approval_required: bool | None = None
+    approval_status: str | None = None
+    delegation_required: bool
+    delegation_session: dict | None = None
+    teleport_request: dict | None = None
+    next_steps: List[str] | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -54,6 +62,12 @@ class AuditEvent(BaseModel):
     approval_status: str
     execution_status: str
     result_summary: str
+    delegator_user: str | None = None
+    delegation_session_id: str | None = None
+    teleport_request_id: str | None = None
+    teleport_request_command: str | None = None
+    requested_scope_json: str | None = None
+    revocation_state: str | None = None
 
 
 class HealthResponse(BaseModel):

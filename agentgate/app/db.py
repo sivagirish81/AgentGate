@@ -47,6 +47,28 @@ def init_db() -> None:
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS delegation_sessions (
+                session_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                delegator_user TEXT,
+                agent_id TEXT NOT NULL,
+                reason TEXT,
+                requested_ttl TEXT,
+                requested_scope_json TEXT NOT NULL,
+                request_mode TEXT,
+                teleport_request_id TEXT,
+                teleport_request_command TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                approved_at TEXT,
+                revoked_at TEXT,
+                expires_at TEXT,
+                notes TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS approvals (
                 task_id TEXT PRIMARY KEY,
                 required INTEGER NOT NULL,
@@ -72,4 +94,22 @@ def init_db() -> None:
             )
             """
         )
+        _add_column_if_missing(conn, "tasks", "delegator_user", "TEXT")
+        _add_column_if_missing(conn, "tasks", "reason", "TEXT")
+        _add_column_if_missing(conn, "tasks", "requested_ttl", "TEXT")
+        _add_column_if_missing(conn, "tasks", "request_mode", "TEXT")
+        _add_column_if_missing(conn, "tasks", "delegation_required", "INTEGER")
+        _add_column_if_missing(conn, "audit_events", "delegator_user", "TEXT")
+        _add_column_if_missing(conn, "audit_events", "delegation_session_id", "TEXT")
+        _add_column_if_missing(conn, "audit_events", "teleport_request_id", "TEXT")
+        _add_column_if_missing(conn, "audit_events", "teleport_request_command", "TEXT")
+        _add_column_if_missing(conn, "audit_events", "requested_scope_json", "TEXT")
+        _add_column_if_missing(conn, "audit_events", "revocation_state", "TEXT")
         conn.commit()
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+    cur = conn.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in cur.fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
