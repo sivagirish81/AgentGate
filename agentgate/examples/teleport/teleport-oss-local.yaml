@@ -1,0 +1,27 @@
+# Example local Teleport OSS config for AgentGate demos.
+# Replace kubeconfig_file with your local kubeconfig path.
+teleport:
+  nodename: "agentgate-local"
+  data_dir: "./teleport-data"
+  log:
+    output: stderr
+    severity: INFO
+
+auth_service:
+  enabled: "yes"
+  listen_addr: "127.0.0.1:3025"
+
+proxy_service:
+  enabled: "yes"
+  listen_addr: "127.0.0.1:3023"
+  web_listen_addr: "127.0.0.1:3080"
+  kube_listen_addr: "127.0.0.1:3026"
+  public_addr: "127.0.0.1:3080"
+
+ssh_service:
+  enabled: "no"
+
+kubernetes_service:
+  enabled: "yes"
+  listen_addr: "127.0.0.1:3027"
+  kubeconfig_file: "/Users/sivagirish/.kube/config"

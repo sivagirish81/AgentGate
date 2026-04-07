@@ -222,6 +222,41 @@ def request_delegation(task_id: str) -> dict:
     }
 
 
+@app.post("/tasks/{task_id}/delegation/attach")
+def attach_delegation_request(task_id: str, payload: dict) -> dict:
+    session = get_session_for_task(task_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="delegation session not found")
+    request_id = payload.get("teleport_request_id")
+    if not request_id:
+        raise HTTPException(status_code=400, detail="teleport_request_id is required")
+    session = update_session(
+        session["session_id"],
+        teleport_request_id=request_id,
+        status=STATUS_PENDING_APPROVAL,
+        notes="request id attached by operator",
+    )
+    record_event(
+        task_id=task_id,
+        agent_id=session.get("agent_id"),
+        action="delegation_attach",
+        environment=_task_environment(task_id),
+        approval_required=True,
+        approval_status=session.get("status"),
+        execution_status="not_started",
+        result_summary="teleport request id attached",
+        delegator_user=session.get("delegator_user"),
+        delegation_session_id=session.get("session_id"),
+        teleport_request_id=session.get("teleport_request_id"),
+        teleport_request_command=session.get("teleport_request_command"),
+        requested_scope_json=session.get("requested_scope_json"),
+    )
+    return {
+        "delegation_session": session,
+        "teleport_request": _teleport_request_payload(session),
+    }
+
+
 @app.get("/tasks/{task_id}/delegation")
 def get_delegation(task_id: str) -> dict:
     session = get_session_for_task(task_id)
