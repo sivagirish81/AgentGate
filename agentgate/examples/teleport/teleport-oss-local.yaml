@@ -24,4 +24,4 @@ ssh_service:
 kubernetes_service:
   enabled: "yes"
   listen_addr: "127.0.0.1:3027"
-  kubeconfig_file: "/Users/sivagirish/.kube/config"
+  kubeconfig_file: "/tmp/kubeconfig-kind.yaml"
