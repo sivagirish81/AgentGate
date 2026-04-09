@@ -50,15 +50,6 @@ flowchart TB
 6. A human approves the request in Teleport.
 7. If an elevated identity is available, write actions execute; otherwise they fail clearly.
 
-## Why This Demonstrates Teleport Understanding
-
-- Uses Workload Identity for non-human access
-- Enforces least privilege by default
-- Uses Access Requests for time-bound elevation
-- Scopes elevation to specific risky actions
-- Links human + agent + request in audit
-- Keeps the Kubernetes story first-class and minimal
-
 ## Quick Start
 
 Requirements:
@@ -109,24 +100,6 @@ AGENTGATE_USE_MOCK_EXECUTOR=true \
 - No `system:masters` or wildcard permissions
 - Write actions require explicit delegation approval
 - Optional elevated execution identity is separate and time-bound
-
-## Current Limitations
-
-- Delegation Sessions are local state, not a Teleport API
-- Access requests are rendered, not created programmatically
-- Auth API polling requires a request ID attached to the session
-- Elevated execution depends on a separate kubeconfig
-- This is a Kubernetes-only prototype
-
-## Next Logical Extension
-
-- Optional provider to create and poll real Teleport Access Requests
-- Map delegation sessions to Teleport Access Request IDs in audit
-- Add scoped resource requests based on live cluster metadata
-
-## Examples
-
-See `agentgate/examples/README.md` for the example files and how to use them safely.
 
 ## Tests
 
